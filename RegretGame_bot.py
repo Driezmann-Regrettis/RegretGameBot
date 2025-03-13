@@ -170,6 +170,64 @@ REGRET_QUESTIONS = [
     "Would you rather have to take a drug test every month for the rest of your life or never be able to drink again?"
 ]
 
+// In-memory tracking for daily limits
+let userDailyCount = {}; // Tracks how many dilemmas a user played per day
+let activeDilemmas = {}; // Tracks which users are currently answering a dilemma
+
+// Function to reset daily limits at midnight
+function resetDailyLimits() {
+  userDailyCount = {}; // Reset all users' counts at midnight
+}
+setInterval(resetDailyLimits, 24 * 60 * 60 * 1000); // Runs every 24h
+
+// Handle PLAY command with daily limit
+async function handlePlay(chatId, botToken, userId) {
+  // Check if user exceeded daily limit
+  if (!userDailyCount[userId]) userDailyCount[userId] = 0;
+  if (userDailyCount[userId] >= 5) {
+    return sendTelegramMessage(chatId, "🚫 You’ve reached your daily limit of 5 dilemmas. Come back tomorrow!", botToken);
+  }
+
+  // Pick random dilemma
+  const randomQuestion = REGRET_QUESTIONS[Math.floor(Math.random() * REGRET_QUESTIONS.length)];
+  
+  // Store active dilemma for the user
+  activeDilemmas[userId] = true;
+  
+  // Send dilemma
+  await sendTelegramMessage(chatId, `🤔 ${randomQuestion}\n\nReply with 'A' or 'B' to choose!`, botToken);
+  
+  // Increase daily count
+  userDailyCount[userId]++;
+}
+
+// Handle user response (only if they got a dilemma)
+async function handleResponse(chatId, text, username, userId, botToken) {
+  const user = username || "Anonymous";
+  
+  // Ensure response is valid and only applies if the user got a dilemma
+  if ((text.toUpperCase() === "A" || text.toUpperCase() === "B") && activeDilemmas[userId]) {
+    // Remove active dilemma so they can’t answer twice
+    delete activeDilemmas[userId];
+
+    // Increment score
+    userScores[user] = (userScores[user] || 0) + 1;
+    const level = getRegretLevel(userScores[user]);
+
+    // Send response
+    await sendTelegramMessage(chatId, `😈 You earned a regret point! Your total: ${userScores[user]} (${level})\nType /play for another dilemma!`, botToken);
+
+    // Send a meme after each response
+    const memeUrl = await fetchMeme();
+    if (memeUrl) {
+      await sendTelegramPhoto(chatId, memeUrl, botToken);
+    } else {
+      await sendTelegramMessage(chatId, "Couldn't fetch a meme, try again later!", botToken);
+    }
+  } else if (text.toUpperCase() === "A" || text.toUpperCase() === "B") {
+    await sendTelegramMessage(chatId, "⚠️ You need to play first! Type /play to get a dilemma.", botToken);
+  }
+}
 
 # Regret Levels
 def get_regret_level(points):
