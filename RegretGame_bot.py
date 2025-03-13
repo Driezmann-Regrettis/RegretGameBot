@@ -1,26 +1,18 @@
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
 import logging
 import random
 import requests
+from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 
-# Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
-# Your Telegram Bot API Token (replace with your own token from @BotFather)
-import os
-from dotenv import load_dotenv
-
+# Load environment variables
 load_dotenv()
-TOKEN = os.getenv("7898843003:AAGiHkAJAkZmZWdSw9RqDe8sB2R4OA8GeW8")
+TOKEN = os.getenv("BOT_TOKEN")
+
+# Enable logging
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Expanded list of regret-based questions
 REGRET_QUESTIONS = [
@@ -183,22 +175,82 @@ def get_regret_level(points):
 
 # Regret Points Tracker
 user_scores = {}
+active_users = {}  # Tracks users currently playing
 
 async def start(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text("Welcome to the Regret Game! Type /play to start your first dilemma!")
+    """Welcome message when the bot starts."""
+    user = update.message.from_user.username or update.message.from_user.first_name
+    await update.message.reply_text(
+        f"🔥 Welcome to the Regret Game, {user}! 🔥\n"
+        "Type /play to start your first dilemma!\n\n"
+        "🔥 Features 🔥\n"
+        "✅ Brutal ‘Would You Rather’ regret dilemmas\n"
+        "✅ Tracks your **Regret Score**\n"
+        "✅ Roasts you with **memes**\n"
+        "✅ Leaderboard for **terrible decision-makers**\n\n"
+        "Type /play & embrace the chaos! 😈🔥"
+    )
 
 async def play(update: Update, context: CallbackContext) -> None:
+    """Starts a new dilemma for the user."""
+    user_id = update.message.from_user.id
+
+    # Prevent users from playing if they have already played today (max 5)
+    if active_users.get(user_id, 0) >= 5:
+        await update.message.reply_text("🚫 You’ve reached your daily limit of 5 dilemmas. Come back tomorrow!")
+        return
+
     question = random.choice(REGRET_QUESTIONS)
+    active_users[user_id] = 1  # Mark user as actively playing
     await update.message.reply_text(f"🤔 {question}\n\nReply with 'A' or 'B' to choose!")
 
 async def leaderboard(update: Update, context: CallbackContext) -> None:
+    """Displays the leaderboard."""
     if not user_scores:
         await update.message.reply_text("No scores yet! Play to earn regret points!")
         return
-    leaderboard_text = "🏆 Regret Leaderboard:\n" + "\n".join([f"{user}: {points} points ({get_regret_level(points)})" for user, points in sorted(user_scores.items(), key=lambda x: x[1], reverse=True)])
+
+    sorted_scores = sorted(user_scores.items(), key=lambda x: x[1], reverse=True)
+    top_players = sorted_scores[:10]
+
+    leaderboard_text = "🏆 **Regret Leaderboard:** 🏆\n"
+    leaderboard_text += "\n".join([f"{idx+1}. {user}: {points} points ({get_regret_level(points)})" for idx, (user, points) in enumerate(top_players)])
+
+    # If the user is not in the top 10, show their ranking
+    user = update.message.from_user.username or update.message.from_user.first_name
+    user_rank = next((i+1 for i, (u, _) in enumerate(sorted_scores) if u == user), None)
+
+    if user_rank and user_rank > 10:
+        leaderboard_text += f"\n...\n🔹 Your rank: {user_rank}/{len(sorted_scores)} - {user_scores[user]} points"
+
     await update.message.reply_text(leaderboard_text)
 
+async def handle_response(update: Update, context: CallbackContext) -> None:
+    """Handles user responses and awards regret points ONLY if they received a dilemma."""
+    user = update.message.from_user.username or update.message.from_user.first_name
+    user_id = update.message.from_user.id
+    text = update.message.text.strip().lower()
+
+    if text in ["a", "b"] and active_users.get(user_id):
+        user_scores[user] = user_scores.get(user, 0) + 1
+        level = get_regret_level(user_scores[user])
+
+        await update.message.reply_text(
+            f"😈 You earned a regret point! Your total: {user_scores[user]} ({level})\n"
+            "Type /play for another dilemma!"
+        )
+
+        # Send a meme after each response
+        await send_meme(update, context)
+
+        # Mark user as done playing (they must type /play again)
+        active_users[user_id] = 0
+
+    else:
+        await update.message.reply_text("⚠️ You need to play first! Type /play to get a dilemma.")
+
 async def fetch_meme():
+    """Fetches a random meme."""
     url = "https://api.imgflip.com/get_memes"
     response = requests.get(url).json()
     if response["success"]:
@@ -208,23 +260,15 @@ async def fetch_meme():
     return None
 
 async def send_meme(update: Update, context: CallbackContext) -> None:
+    """Sends a random meme."""
     meme_url = await fetch_meme()
     if meme_url:
         await update.message.reply_photo(photo=meme_url)
     else:
         await update.message.reply_text("Couldn't fetch a meme, try again later!")
 
-async def handle_response(update: Update, context: CallbackContext) -> None:
-    user = update.message.from_user.username or update.message.from_user.first_name
-    if update.message.text.lower() in ["a", "b"]:
-        user_scores[user] = user_scores.get(user, 0) + 1
-        level = get_regret_level(user_scores[user])
-        await update.message.reply_text(f"😈 You earned a regret point! Your total: {user_scores[user]} ({level})\nType /play for another dilemma!")
-        await send_meme(update, context)  # Send a meme after each response
-    else:
-        await update.message.reply_text("Please respond with 'A' or 'B' to choose!")
-
 def main() -> None:
+    """Starts the bot."""
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("play", play))
@@ -233,4 +277,5 @@ def main() -> None:
     app.run_polling()
 
 if __name__ == "__main__":
+    main()
     main()
